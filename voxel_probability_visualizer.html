@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ML Voxel Surrogate - Probability Field Visualizer</title>
+    
+    <!-- Tailwind CSS for sleek UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js and OrbitControls for 3D Rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; color: white; font-family: 'Inter', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        
+        .glass-panel {
+            background: rgba(15, 15, 15, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        #ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            width: 320px;
+            padding: 24px;
+        }
+
+        /* Redesigned Axo Panel for Top Right */
+        #axo-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            padding: 16px 24px;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 20px;
+        }
+
+        /* Container for the 2nd WebGL Canvas */
+        #axo-view {
+            width: 180px;
+            height: 240px;
+            position: relative;
+        }
+
+        /* Custom Standard Slider Styling */
+        input[type=range].slider-standard {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range].slider-standard::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 3px solid #10b981;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+        input[type=range].slider-standard::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        /* Robust Custom Vertical Slider via CSS Transform */
+        .slider-rotated {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) rotate(-90deg);
+            width: 200px; /* Represents height */
+            height: 4px;
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            outline: none;
+        }
+        .slider-rotated::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 20px;
+            width: 20px;
+            border-radius: 50%;
+            background: #ffffff; /* Bright white center */
+            border: 4px solid #10b981; /* Emerald Ring */
+            cursor: pointer;
+            margin-top: -8px; /* Centers thumb on the 4px track */
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.9);
+        }
+
+        .floating-label {
+            position: absolute;
+            bottom: 30px;
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            pointer-events: none;
+            z-index: 5;
+            width: 100%;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Canvas (Main Scene) -->
+    <div id="canvas-container"></div>
+    
+    <div class="floating-label">Drag to rotate • Scroll to zoom</div>
+
+    <!-- Main Parameter UI Overlay -->
+    <div id="ui-panel" class="glass-panel">
+        <h1 class="text-xl font-bold mb-1 tracking-tight">Heuristic Field Map</h1>
+        <p class="text-xs text-gray-400 mb-6 pb-4 border-b border-gray-700">Latent Space Visualizer</p>
+
+        <!-- Morphology Slider -->
+        <div class="mb-5">
+            <div class="flex justify-between text-sm mb-1">
+                <span class="font-medium text-gray-200">Morphology</span>
+                <span id="val_morph" class="text-emerald-400 font-mono text-xs">0.50</span>
+            </div>
+            <input type="range" id="sl_morph" class="slider-standard" min="0" max="1" step="0.01" value="0.5">
+            <div class="flex justify-between text-[10px] text-gray-500 mt-1 uppercase tracking-wider">
+                <span>Blob</span>
+                <span>Bar</span>
+                <span>H-Shape</span>
+            </div>
+        </div>
+
+        <!-- Z-Dist Slider -->
+        <div class="mb-5">
+            <div class="flex justify-between text-sm mb-1">
+                <span class="font-medium text-gray-200">Z-Dist (Altitude)</span>
+                <span id="val_zdist" class="text-emerald-400 font-mono text-xs">0.50</span>
+            </div>
+            <input type="range" id="sl_zdist" class="slider-standard" min="0" max="1" step="0.01" value="0.5">
+        </div>
+
+        <!-- Z-Bias Slider -->
+        <div class="mb-5">
+            <div class="flex justify-between text-sm mb-1">
+                <span class="font-medium text-gray-200">Z-Bias (Concentration)</span>
+                <span id="val_zbias" class="text-emerald-400 font-mono text-xs">0.50</span>
+            </div>
+            <input type="range" id="sl_zbias" class="slider-standard" min="0" max="1" step="0.01" value="0.5">
+        </div>
+
+        <!-- Orientation Slider -->
+        <div class="mb-6">
+            <div class="flex justify-between text-sm mb-1">
+                <span class="font-medium text-gray-200">Orientation</span>
+                <span id="val_orient" class="text-emerald-400 font-mono text-xs">0°</span>
+            </div>
+            <input type="range" id="sl_orient" class="slider-standard" min="0" max="360" step="1" value="0">
+        </div>
+
+        <div class="pt-4 border-t border-gray-700">
+            <div class="flex justify-between items-center">
+                <span class="text-xs text-gray-400">Probability Field</span>
+                <div class="h-2 w-32 rounded bg-gradient-to-r from-blue-600 via-green-400 to-red-500"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Axonometric HUD Overlay (Top Right) -->
+    <div id="axo-panel" class="glass-panel">
+        <!-- Dedicated Div for the 2nd WebGL Renderer -->
+        <div id="axo-view"></div>
+        
+        <!-- Vertical Split Controller -->
+        <div class="flex flex-col items-center justify-between" style="height: 240px; padding-top: 10px; padding-bottom: 10px;">
+            <span class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Z-Cut</span>
+            <span id="val_split" class="text-emerald-400 font-mono text-sm font-bold mb-2">11</span>
+            
+            <div style="height: 200px; width: 30px; position: relative;">
+                <input type="range" id="sl_split" class="slider-rotated" min="0" max="22" step="1" value="11">
+            </div>
+            
+            <span class="text-[10px] text-gray-500 uppercase tracking-widest mt-2">Gnd</span>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. SETUP TWO INDEPENDENT THREE.JS SCENES ---
+        
+        // SCENE 1: Main Global View
+        const containerMain = document.getElementById('canvas-container');
+        const sceneMain = new THREE.Scene();
+        sceneMain.fog = new THREE.FogExp2(0x050505, 0.003);
+        const cameraMain = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
+        cameraMain.position.set(0, 30, 75);
+
+        const rendererMain = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        rendererMain.setSize(window.innerWidth, window.innerHeight);
+        rendererMain.setPixelRatio(window.devicePixelRatio);
+        containerMain.appendChild(rendererMain.domElement);
+
+        const controlsMain = new THREE.OrbitControls(cameraMain, rendererMain.domElement);
+        controlsMain.enableDamping = true;
+        controlsMain.dampingFactor = 0.05;
+
+        // SCENE 2: Axonometric HUD View (Pinned Top Right)
+        const containerAxo = document.getElementById('axo-view');
+        const sceneAxo = new THREE.Scene();
+        const cameraAxo = new THREE.PerspectiveCamera(35, 180 / 240, 1, 1000);
+        cameraAxo.position.set(40, 30, 40); // Fixed isometric angle
+        cameraAxo.lookAt(0, 13, 0);
+
+        const rendererAxo = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        rendererAxo.setSize(180, 240);
+        rendererAxo.setPixelRatio(window.devicePixelRatio);
+        containerAxo.appendChild(rendererAxo.domElement);
+
+        // Lighting for both scenes
+        sceneMain.add(new THREE.AmbientLight(0xffffff, 0.4));
+        const dirLightMain = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLightMain.position.set(50, 100, 50);
+        sceneMain.add(dirLightMain);
+
+        sceneAxo.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLightAxo = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLightAxo.position.set(50, 100, 50);
+        sceneAxo.add(dirLightAxo);
+
+        // Floor Grid (Main Scene only)
+        const gridHelper = new THREE.GridHelper(200, 20, 0x222222, 0x111111);
+        gridHelper.position.y = -0.5;
+        sceneMain.add(gridHelper);
+
+        // --- 2. HIERARCHY & BOUNDARIES ---
+        const x_size = 20;
+        const y_size = 20;
+        const max_height = 22;
+        const count = x_size * y_size * max_height;
+        
+        const ox = x_size / 2.0;
+        const oy = y_size / 2.0;
+        const cx = 10; 
+        const cy = 10; 
+
+        const mainGroup = new THREE.Group();
+        const axoGroup = new THREE.Group();
+        sceneMain.add(mainGroup);
+        sceneAxo.add(axoGroup);
+
+        const slice_gap_z = 8; // Explosion gap distance
+
+        const unitBox = new THREE.BoxGeometry(1, 1, 1);
+        const edges = new THREE.EdgesGeometry(unitBox);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x333333 });
+        
+        const mainLine = new THREE.LineSegments(edges, lineMat);
+        mainLine.scale.set(x_size, max_height, y_size);
+        mainLine.position.set(0, max_height/2 - 0.5, 0);
+        mainGroup.add(mainLine);
+
+        const axoLineBottom = new THREE.LineSegments(edges, lineMat);
+        const axoLineTop = new THREE.LineSegments(edges, lineMat);
+        axoGroup.add(axoLineBottom);
+        axoGroup.add(axoLineTop);
+
+        // --- 3. THE Z-ATTRACTOR "MAGNETIC" PLANE ---
+        const targetGeo = new THREE.PlaneGeometry(x_size + 4, y_size + 4);
+        const targetMat = new THREE.MeshBasicMaterial({
+            color: 0x10b981, 
+            transparent: true,
+            opacity: 0.2,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        const targetPlane = new THREE.Mesh(targetGeo, targetMat);
+        targetPlane.rotation.x = Math.PI / 2;
+        
+        const targetEdges = new THREE.EdgesGeometry(targetGeo);
+        const targetLine = new THREE.LineSegments(targetEdges, new THREE.LineBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.8 }));
+        targetPlane.add(targetLine);
+        mainGroup.add(targetPlane);
+
+        // --- 4. INSTANCED MESHES (Dual Rendering) ---
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const material = new THREE.MeshPhongMaterial({ 
+            color: 0xffffff, 
+            transparent: true,
+            opacity: 0.9,
+            shininess: 100
+        });
+        
+        const mainMesh = new THREE.InstancedMesh(geometry, material, count);
+        const sliceMesh = new THREE.InstancedMesh(geometry, material, count);
+        mainGroup.add(mainMesh);
+        axoGroup.add(sliceMesh);
+
+        const dummyMain = new THREE.Object3D();
+        const dummySlice = new THREE.Object3D();
+        const color = new THREE.Color();
+
+        // --- 5. THE MATHEMATICS ---
+        function updateField() {
+            const morphology = parseFloat(document.getElementById('sl_morph').value);
+            const z_dist = parseFloat(document.getElementById('sl_zdist').value);
+            const z_bias = parseFloat(document.getElementById('sl_zbias').value);
+            const orientation = parseFloat(document.getElementById('sl_orient').value);
+            const splitZ = parseInt(document.getElementById('sl_split').value);
+
+            document.getElementById('val_morph').innerText = morphology.toFixed(2);
+            document.getElementById('val_zdist').innerText = z_dist.toFixed(2);
+            document.getElementById('val_zbias').innerText = z_bias.toFixed(2);
+            document.getElementById('val_orient').innerText = orientation + "°";
+            document.getElementById('val_split').innerText = splitZ;
+
+            const target_peak = z_dist * max_height;
+            // Move the glowing datum plane to the magnetic altitude
+            targetPlane.position.y = target_peak; 
+
+            // HUD Wireframe scaling
+            if (splitZ > 0) {
+                axoLineBottom.visible = true;
+                axoLineBottom.scale.set(x_size, splitZ, y_size);
+                axoLineBottom.position.set(0, splitZ / 2 - 0.5, 0);
+            } else { axoLineBottom.visible = false; }
+
+            if (splitZ < max_height) {
+                axoLineTop.visible = true;
+                axoLineTop.scale.set(x_size, max_height - splitZ, y_size);
+                axoLineTop.position.set(0, splitZ + (max_height - splitZ)/2 - 0.5 + slice_gap_z, 0);
+            } else { axoLineTop.visible = false; }
+
+            const rad = orientation * (Math.PI / 180.0);
+            const z_concentration = Math.pow(z_bias, 2) * 1.5;
+
+            const pull = morphology;
+            const pinch = morphology <= 0.5 ? 0.0 : Math.pow((morphology - 0.5) * 2.0, 2);
+            const gravity = 1.0 - Math.pow(morphology, 2);
+
+            let i = 0;
+            let max_score = 0;
+            const scores = new Float32Array(count);
+
+            for (let x = 0; x < x_size; x++) {
+                for (let y = 0; y < y_size; y++) {
+                    for (let z = 0; z < max_height; z++) {
+                        
+                        const z_diff = Math.abs(z - target_peak);
+                        const z_attractor = 1.0 / (1.0 + Math.pow(z_diff * z_concentration, 2));
+                        let score = Math.max(0.01, (z_attractor * 12.0) * 5.0); 
+
+                        const dx = x - cx;
+                        const dy = y - cy;
+                        const dist_to_center = Math.hypot(dx, dy);
+
+                        let shape_score = 1.0;
+                        if (dist_to_center > 0) {
+                            const norm_dx = dx / dist_to_center;
+                            const norm_dy = dy / dist_to_center;
+                            const axis_proj = Math.abs((norm_dx * Math.cos(rad)) + (norm_dy * Math.sin(rad)));
+                            const perp_proj = Math.abs((norm_dx * -Math.sin(rad)) + (norm_dy * Math.cos(rad)));
+                            shape_score = (axis_proj * pull) - (pinch * 3.0 * perp_proj);
+                        }
+
+                        const boost_radius = Math.max(0.1, (gravity * 6.0));
+                        const core_boost = Math.exp(-0.5 * Math.pow(dist_to_center / boost_radius, 2));
+
+                        const shape_multiplier = Math.max(0.1, 1.0 + shape_score + (core_boost * 1.5));
+                        score *= shape_multiplier;
+
+                        scores[i] = score;
+                        if (score > max_score) max_score = score;
+                        i++;
+                    }
+                }
+            }
+
+            i = 0;
+            for (let x = 0; x < x_size; x++) {
+                for (let y = 0; y < y_size; y++) {
+                    for (let z = 0; z < max_height; z++) {
+                        
+                        const normalized_score = Math.pow(scores[i] / max_score, 0.8); 
+                        const scale = Math.max(0.0, normalized_score * 0.95);
+                        
+                        const hue = (1.0 - normalized_score) * 0.6; 
+                        color.setHSL(hue, 1.0, 0.5);
+
+                        // Main Scene Layout
+                        dummyMain.position.set(x - ox + 0.5, z, y - oy + 0.5);
+                        dummyMain.scale.set(scale, scale, scale);
+                        dummyMain.updateMatrix();
+                        mainMesh.setMatrixAt(i, dummyMain.matrix);
+                        mainMesh.setColorAt(i, color);
+
+                        // HUD Axo Split Layout
+                        let axo_z = z;
+                        if (z >= splitZ) axo_z += slice_gap_z; 
+
+                        dummySlice.position.set(x - ox + 0.5, axo_z, y - oy + 0.5);
+                        dummySlice.scale.set(scale, scale, scale);
+                        dummySlice.updateMatrix();
+                        sliceMesh.setMatrixAt(i, dummySlice.matrix);
+                        sliceMesh.setColorAt(i, color);
+
+                        i++;
+                    }
+                }
+            }
+
+            mainMesh.instanceMatrix.needsUpdate = true;
+            mainMesh.instanceColor.needsUpdate = true;
+            sliceMesh.instanceMatrix.needsUpdate = true;
+            sliceMesh.instanceColor.needsUpdate = true;
+        }
+
+        // --- 6. EVENT LISTENERS & ANIMATION LOOP ---
+        document.getElementById('sl_morph').addEventListener('input', updateField);
+        document.getElementById('sl_zdist').addEventListener('input', updateField);
+        document.getElementById('sl_zbias').addEventListener('input', updateField);
+        document.getElementById('sl_orient').addEventListener('input', updateField);
+        document.getElementById('sl_split').addEventListener('input', updateField);
+
+        updateField();
+
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            cameraMain.aspect = window.innerWidth / window.innerHeight;
+            cameraMain.updateProjectionMatrix();
+            rendererMain.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Orbit only the main structure. The Axo HUD stays perfectly locked in place.
+            mainGroup.rotation.y += 0.003;
+            
+            // Pulse the Z-Attractor plane to indicate "Magnetic Energy"
+            const time = Date.now() * 0.003;
+            targetMat.opacity = 0.15 + Math.sin(time) * 0.1;
+            
+            controlsMain.update(); 
+            
+            // Render the two isolated scenes
+            rendererMain.render(sceneMain, cameraMain);
+            rendererAxo.render(sceneAxo, cameraAxo);
+        }
+        
+        window.onload = function() {
+            animate();
+        }
+    </script>
+</body>
+</html>
